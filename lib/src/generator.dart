@@ -7,7 +7,8 @@ import 'commands.dart';
 
 class Generator {
   Generator(this._paperSize, this._profile,
-      {this.spaceBetweenRows = 5, this.codec = latin1});
+      {this.spaceBetweenRows = 0,
+      this.codec = latin1}); // Changed default from 5 to 0
 
   // Ticket config
   final PaperSize _paperSize;
@@ -41,7 +42,7 @@ class Generator {
 
   double _colIndToPosition(int colInd) {
     final int width = _paperSize.width;
-    return colInd == 0 ? 0 : (width * colInd / 12 - 1);
+    return colInd == 0 ? 0 : (width * colInd / 12);
   }
 
   int _getCharsPerLine(PosStyles styles, int? maxCharsPerLine) {
@@ -508,9 +509,25 @@ class Generator {
           int realCharactersNb = encodedToPrint.length;
           if (realCharactersNb > maxCharactersNb) {
             // Print max possible and split to the next row
+            // Ensure we don't split in the middle of a word if possible
+            int splitPoint = maxCharactersNb;
+            if (maxCharactersNb < encodedToPrint.length) {
+              // Try to find a space to split at
+              String originalText = cols[i].text;
+              if (maxCharactersNb < originalText.length &&
+                  originalText[maxCharactersNb] != ' ') {
+                for (int j = maxCharactersNb - 1; j >= 0; j--) {
+                  if (j < originalText.length && originalText[j] == ' ') {
+                    splitPoint = j;
+                    break;
+                  }
+                }
+              }
+            }
+
             Uint8List encodedToPrintNextRow =
-                encodedToPrint.sublist(maxCharactersNb);
-            encodedToPrint = encodedToPrint.sublist(0, maxCharactersNb);
+                encodedToPrint.sublist(splitPoint);
+            encodedToPrint = encodedToPrint.sublist(0, splitPoint);
             isNextRow = true;
             nextRow.add(PosColumn(
                 textEncoded: encodedToPrintNextRow,
@@ -826,8 +843,7 @@ class Generator {
       // Align
       if (colWidth != 12) {
         // Update fromPos
-        final double toPos =
-            _colIndToPosition(colInd + colWidth) - spaceBetweenRows;
+        final double toPos = _colIndToPosition(colInd + colWidth);
         final double textLen = textBytes.length * charWidth;
 
         if (styles.align == PosAlign.right) {
@@ -884,5 +900,62 @@ class Generator {
     bytes += emptyLines(linesAfter + 1);
     return bytes;
   }
+
+  /// Print a custom table row with better spacing control
+  /// This method provides more precise control over column spacing
+  List<int> customTableRow(List<String> columns, List<int> widths,
+      {List<PosAlign>? aligns, PosStyles? styles}) {
+    if (columns.length != widths.length) {
+      throw Exception('Columns and widths must have the same length');
+    }
+
+    final totalWidth = widths.fold(0, (sum, width) => sum + width);
+    if (totalWidth != 12) {
+      throw Exception('Total width must equal 12');
+    }
+
+    List<int> bytes = [];
+    final defaultStyles = styles ?? const PosStyles();
+
+    // Calculate character width for current font
+    final charsPerLine = _getCharsPerLine(defaultStyles, null);
+    final totalChars = charsPerLine;
+
+    String line = '';
+    int currentPos = 0;
+
+    for (int i = 0; i < columns.length; i++) {
+      final colWidth = (totalChars * widths[i] / 12).floor();
+      final align =
+          aligns != null && i < aligns.length ? aligns[i] : PosAlign.left;
+      String colText = columns[i];
+
+      // Truncate if too long
+      if (colText.length > colWidth) {
+        colText = colText.substring(0, colWidth);
+      }
+
+      // Apply alignment
+      String paddedText;
+      if (align == PosAlign.right) {
+        paddedText = colText.padLeft(colWidth);
+      } else if (align == PosAlign.center) {
+        final leftPad = ((colWidth - colText.length) / 2).floor();
+        paddedText =
+            colText.padLeft(leftPad + colText.length).padRight(colWidth);
+      } else {
+        paddedText = colText.padRight(colWidth);
+      }
+
+      line += paddedText;
+      currentPos += colWidth;
+    }
+
+    bytes += _encode(line);
+    bytes += '\n'.codeUnits;
+
+    return bytes;
+  }
+
 // ************************ (end) Internal command generators ************************
 }
