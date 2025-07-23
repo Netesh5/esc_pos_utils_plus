@@ -511,16 +511,15 @@ class Generator {
             // Print max possible and split to the next row
             // Ensure we don't split in the middle of a word if possible
             int splitPoint = maxCharactersNb;
-            if (maxCharactersNb < encodedToPrint.length) {
-              // Try to find a space to split at
-              String originalText = cols[i].text;
-              if (maxCharactersNb < originalText.length &&
-                  originalText[maxCharactersNb] != ' ') {
-                for (int j = maxCharactersNb - 1; j >= 0; j--) {
-                  if (j < originalText.length && originalText[j] == ' ') {
-                    splitPoint = j;
-                    break;
-                  }
+            String originalText = cols[i].text;
+            if (maxCharactersNb < originalText.length &&
+                originalText[maxCharactersNb] != ' ') {
+              for (int j = maxCharactersNb - 1;
+                  j >= maxCharactersNb - 10 && j >= 0;
+                  j--) {
+                if (j < originalText.length && originalText[j] == ' ') {
+                  splitPoint = j;
+                  break;
                 }
               }
             }
