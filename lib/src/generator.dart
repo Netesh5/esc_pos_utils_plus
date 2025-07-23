@@ -1,3 +1,1087 @@
+// import 'dart:convert';
+// import 'dart:typed_data' show Uint8List;
+// import 'package:flutter/services.dart';
+// import 'package:image/image.dart';
+// import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
+// import 'commands.dart';
+
+// class Generator {
+//   Generator(this._paperSize, this._profile,
+//       {this.spaceBetweenRows = 0,
+//       this.codec = latin1}); // Changed default from 5 to 0
+
+//   // Ticket config
+//   final PaperSize _paperSize;
+//   final CapabilityProfile _profile;
+//   int? _maxCharsPerLine;
+//   // Global styles
+//   String? _codeTable;
+//   PosFontType? _font;
+//   // Current styles
+//   PosStyles _styles = const PosStyles();
+//   final Codec codec;
+//   int spaceBetweenRows;
+
+//   // ************************ Internal helpers ************************
+//   int _getMaxCharsPerLine(PosFontType? font) {
+//     if (_paperSize == PaperSize.mm58) {
+//       return (font == null || font == PosFontType.fontA) ? 32 : 42;
+//     } else if (_paperSize == PaperSize.mm72) {
+//       return (font == null || font == PosFontType.fontA) ? 42 : 56;
+//     } else {
+//       return (font == null || font == PosFontType.fontA) ? 48 : 64;
+//     }
+//   }
+
+//   // charWidth = default width * text size multiplier
+//   double _getCharWidth(PosStyles styles, {int? maxCharsPerLine}) {
+//     int charsPerLine = _getCharsPerLine(styles, maxCharsPerLine);
+//     double charWidth = (_paperSize.width / charsPerLine) * styles.width.value;
+//     return charWidth;
+//   }
+
+//   double _colIndToPosition(int colInd) {
+//     final int width = _paperSize.width;
+//     return colInd == 0 ? 0 : (width * colInd / 12);
+//   }
+
+//   int _getCharsPerLine(PosStyles styles, int? maxCharsPerLine) {
+//     int charsPerLine;
+//     if (maxCharsPerLine != null) {
+//       charsPerLine = maxCharsPerLine;
+//     } else {
+//       if (styles.fontType != null) {
+//         charsPerLine = _getMaxCharsPerLine(styles.fontType);
+//       } else {
+//         charsPerLine =
+//             _maxCharsPerLine ?? _getMaxCharsPerLine(_styles.fontType);
+//       }
+//     }
+//     return charsPerLine;
+//   }
+
+//   Uint8List _encode(String text, {bool isKanji = false}) {
+//     // replace some non-ascii characters
+//     text = text
+//         .replaceAll("’", "'")
+//         .replaceAll("´", "'")
+//         .replaceAll("»", '"')
+//         .replaceAll(" ", ' ')
+//         .replaceAll("•", '.');
+//     if (!isKanji) {
+//       return codec.encode(text);
+//     } else {
+//       return Uint8List.fromList(gbk_bytes.encode(text));
+//     }
+//   }
+
+//   List _getLexemes(String text) {
+//     final List<String> lexemes = [];
+//     final List<bool> isLexemeChinese = [];
+//     int start = 0;
+//     int end = 0;
+//     bool curLexemeChinese = _isChinese(text[0]);
+//     for (var i = 1; i < text.length; ++i) {
+//       if (curLexemeChinese == _isChinese(text[i])) {
+//         end += 1;
+//       } else {
+//         lexemes.add(text.substring(start, end + 1));
+//         isLexemeChinese.add(curLexemeChinese);
+//         start = i;
+//         end = i;
+//         curLexemeChinese = !curLexemeChinese;
+//       }
+//     }
+//     lexemes.add(text.substring(start, end + 1));
+//     isLexemeChinese.add(curLexemeChinese);
+
+//     return <dynamic>[lexemes, isLexemeChinese];
+//   }
+
+//   /// Break text into chinese/non-chinese lexemes
+//   bool _isChinese(String ch) {
+//     return ch.codeUnitAt(0) > 255;
+//   }
+
+//   /// Generate multiple bytes for a number: In lower and higher parts, or more parts as needed.
+//   ///
+//   /// [value] Input number
+//   /// [bytesNb] The number of bytes to output (1 - 4)
+//   List<int> _intLowHigh(int value, int bytesNb) {
+//     final dynamic maxInput = 256 << (bytesNb * 8) - 1;
+
+//     if (bytesNb < 1 || bytesNb > 4) {
+//       throw Exception('Can only output 1-4 bytes');
+//     }
+//     if (value < 0 || value > maxInput) {
+//       throw Exception(
+//           'Number is too large. Can only output up to $maxInput in $bytesNb bytes');
+//     }
+
+//     final List<int> res = <int>[];
+//     int buf = value;
+//     for (int i = 0; i < bytesNb; ++i) {
+//       res.add(buf % 256);
+//       buf = buf ~/ 256;
+//     }
+//     return res;
+//   }
+
+//   /// Extract slices of an image as equal-sized blobs of column-format data.
+//   ///
+//   /// [image] Image to extract from
+//   /// [lineHeight] Printed line height in dots
+//   List<List<int>> _toColumnFormat(Image imgSrc, int lineHeight) {
+//     final Image image = Image.from(imgSrc); // make a copy
+
+//     // Determine new width: closest integer that is divisible by lineHeight
+//     final int widthPx = (image.width + lineHeight) - (image.width % lineHeight);
+//     final int heightPx = image.height;
+
+//     // Create a black bottom layer
+//     final biggerImage = copyResize(image,
+//         width: widthPx, height: heightPx, interpolation: Interpolation.linear);
+//     //fill(biggerImage, color: ColorRgb8(0, 0, 0));
+//     fill(biggerImage, color: ColorRgb8(0, 0, 0));
+//     // Insert source image into bigger one
+//     compositeImage(biggerImage, image, dstX: 0, dstY: 0);
+
+//     int left = 0;
+//     final List<List<int>> blobs = [];
+
+//     while (left < widthPx) {
+//       final Image slice = copyCrop(biggerImage,
+//           x: left, y: 0, width: lineHeight, height: heightPx);
+//       if (slice.numChannels > 2) grayscale(slice);
+//       final imgBinary =
+//           (slice.numChannels > 1) ? slice.convert(numChannels: 1) : slice;
+//       final bytes = imgBinary.getBytes();
+//       blobs.add(bytes);
+//       left += lineHeight;
+//     }
+
+//     return blobs;
+//   }
+
+//   /// Image rasterization
+//   List<int> _toRasterFormat(Image imgSrc) {
+//     final Image image = Image.from(imgSrc); // make a copy
+//     final int widthPx = image.width;
+//     final int heightPx = image.height;
+
+//     grayscale(image);
+//     invert(image);
+
+//     // R/G/B channels are same -> keep only one channel
+//     List<int> oneChannelBytes = [];
+//     final List<int> buffer = image.getBytes(order: ChannelOrder.rgba);
+//     for (int i = 0; i < buffer.length; i += 4) {
+//       oneChannelBytes.add(buffer[i]);
+//     }
+
+//     // Add some empty pixels at the end of each line (to make the width divisible by 8)
+//     if (widthPx % 8 != 0) {
+//       final targetWidth = (widthPx + 8) - (widthPx % 8);
+//       final missingPx = targetWidth - widthPx;
+//       final extra = Uint8List(missingPx);
+
+//       oneChannelBytes = List<int>.filled(heightPx * targetWidth, 0);
+
+//       for (int i = 0; i < heightPx; i++) {
+//         final pos =
+//             (i * widthPx) + i * missingPx; // Corrected position calculation
+//         oneChannelBytes.insertAll(pos, extra);
+//       }
+//     }
+
+//     //  if (widthPx % 8 != 0) {
+//     //   final targetWidth = (widthPx + 8) - (widthPx % 8);
+//     //   final missingPx = targetWidth - widthPx;
+//     //   final extra = Uint8List(missingPx);
+//     //   for (int i = 0; i < heightPx; i++) {
+//     //     final pos = (i * widthPx + widthPx) + i * missingPx;
+//     //     oneChannelBytes.insertAll(pos, extra);
+//     //   }
+//     // }
+
+//     // Pack bits into bytes
+//     return _packBitsIntoBytes(oneChannelBytes);
+//   }
+
+//   /// Merges each 8 values (bits) into one byte
+//   List<int> _packBitsIntoBytes(List<int> bytes) {
+//     const pxPerLine = 8;
+//     final List<int> res = <int>[];
+//     const threshold = 127; // set the greyscale -> b/w threshold here
+//     for (int i = 0; i < bytes.length; i += pxPerLine) {
+//       int newVal = 0;
+//       for (int j = 0; j < pxPerLine; j++) {
+//         newVal = _transformUint32Bool(
+//           newVal,
+//           pxPerLine - j,
+//           bytes[i + j] > threshold,
+//         );
+//       }
+//       res.add(newVal ~/ 2);
+//     }
+//     return res;
+//   }
+
+//   /// Replaces a single bit in a 32-bit unsigned integer.
+//   int _transformUint32Bool(int uint32, int shift, bool newValue) {
+//     return ((0xFFFFFFFF ^ (0x1 << shift)) & uint32) |
+//         ((newValue ? 1 : 0) << shift);
+//   }
+//   // ************************ (end) Internal helpers  ************************
+
+//   //**************************** Public command generators ************************
+//   /// Clear the buffer and reset text styles
+//   List<int> reset() {
+//     List<int> bytes = [];
+//     bytes += cInit.codeUnits;
+//     _styles = const PosStyles();
+//     bytes += setGlobalCodeTable(_codeTable);
+//     bytes += setGlobalFont(_font);
+//     return bytes;
+//   }
+
+//   /// Clear the buffer and reset text styles
+//   List<int> clearStyle() {
+//     return setStyles(
+//         const PosStyles(height: PosTextSize.size1, width: PosTextSize.size1));
+//   }
+
+//   /// Set global code table which will be used instead of the default printer's code table
+//   /// (even after resetting)
+//   List<int> setGlobalCodeTable(String? codeTable) {
+//     List<int> bytes = [];
+//     _codeTable = codeTable;
+//     if (codeTable != null) {
+//       bytes += Uint8List.fromList(
+//         List.from(cCodeTable.codeUnits)..add(_profile.getCodePageId(codeTable)),
+//       );
+//       _styles = _styles.copyWith(codeTable: codeTable);
+//     }
+//     return bytes;
+//   }
+
+//   /// Set global font which will be used instead of the default printer's font
+//   /// (even after resetting)
+//   List<int> setGlobalFont(PosFontType? font, {int? maxCharsPerLine}) {
+//     List<int> bytes = [];
+//     _font = font;
+//     if (font != null) {
+//       _maxCharsPerLine = maxCharsPerLine ?? _getMaxCharsPerLine(font);
+//       bytes += font == PosFontType.fontB ? cFontB.codeUnits : cFontA.codeUnits;
+//       _styles = _styles.copyWith(fontType: font);
+//     }
+//     return bytes;
+//   }
+
+//   List<int> setStyles(PosStyles styles, {bool isKanji = false}) {
+//     List<int> bytes = [];
+//     if (styles.align != _styles.align) {
+//       bytes += codec.encode(styles.align == PosAlign.left
+//           ? cAlignLeft
+//           : (styles.align == PosAlign.center ? cAlignCenter : cAlignRight));
+//       _styles = _styles.copyWith(align: styles.align);
+//     }
+
+//     if (styles.bold != _styles.bold) {
+//       bytes += styles.bold ? cBoldOn.codeUnits : cBoldOff.codeUnits;
+//       _styles = _styles.copyWith(bold: styles.bold);
+//     }
+//     if (styles.turn90 != _styles.turn90) {
+//       bytes += styles.turn90 ? cTurn90On.codeUnits : cTurn90Off.codeUnits;
+//       _styles = _styles.copyWith(turn90: styles.turn90);
+//     }
+//     if (styles.reverse != _styles.reverse) {
+//       bytes += styles.reverse ? cReverseOn.codeUnits : cReverseOff.codeUnits;
+//       _styles = _styles.copyWith(reverse: styles.reverse);
+//     }
+//     if (styles.underline != _styles.underline) {
+//       bytes +=
+//           styles.underline ? cUnderline1dot.codeUnits : cUnderlineOff.codeUnits;
+//       _styles = _styles.copyWith(underline: styles.underline);
+//     }
+
+//     // Set font
+//     if (styles.fontType != null && styles.fontType != _styles.fontType) {
+//       bytes += styles.fontType == PosFontType.fontB
+//           ? cFontB.codeUnits
+//           : cFontA.codeUnits;
+//       _styles = _styles.copyWith(fontType: styles.fontType);
+//     } else if (_font != null && _font != _styles.fontType) {
+//       bytes += _font == PosFontType.fontB ? cFontB.codeUnits : cFontA.codeUnits;
+//       _styles = _styles.copyWith(fontType: _font);
+//     }
+
+//     // Characters size
+//     if (styles.height.value != _styles.height.value ||
+//         styles.width.value != _styles.width.value) {
+//       bytes += Uint8List.fromList(
+//         List.from(cSizeGSn.codeUnits)
+//           ..add(PosTextSize.decSize(styles.height, styles.width)),
+//       );
+//       _styles = _styles.copyWith(height: styles.height, width: styles.width);
+//     }
+
+//     // Set Kanji mode
+//     if (isKanji) {
+//       bytes += cKanjiOn.codeUnits;
+//     } else {
+//       bytes += cKanjiOff.codeUnits;
+//     }
+
+//     // Set local code table
+//     if (styles.codeTable != null) {
+//       bytes += Uint8List.fromList(
+//         List.from(cCodeTable.codeUnits)
+//           ..add(_profile.getCodePageId(styles.codeTable)),
+//       );
+//       _styles =
+//           _styles.copyWith(align: styles.align, codeTable: styles.codeTable);
+//     } else if (_codeTable != null) {
+//       bytes += Uint8List.fromList(
+//         List.from(cCodeTable.codeUnits)
+//           ..add(_profile.getCodePageId(_codeTable)),
+//       );
+//       _styles = _styles.copyWith(align: styles.align, codeTable: _codeTable);
+//     }
+
+//     return bytes;
+//   }
+
+//   /// Send raw command(s)
+//   List<int> rawBytes(List<int> cmd, {bool isKanji = false}) {
+//     List<int> bytes = [];
+//     if (!isKanji) {
+//       bytes += cKanjiOff.codeUnits;
+//     }
+//     bytes += Uint8List.fromList(cmd);
+//     return bytes;
+//   }
+
+//   List<int> text(
+//     String text, {
+//     PosStyles styles = const PosStyles(),
+//     int linesAfter = 0,
+//     bool containsChinese = false,
+//     int? maxCharsPerLine,
+//   }) {
+//     List<int> bytes = [];
+//     if (!containsChinese) {
+//       bytes += _text(
+//         _encode(text, isKanji: containsChinese),
+//         styles: styles,
+//         isKanji: containsChinese,
+//         maxCharsPerLine: maxCharsPerLine,
+//       );
+//       // Ensure at least one line break after the text
+//       bytes += emptyLines(linesAfter + 1);
+//     } else {
+//       bytes += _mixedKanji(text, styles: styles, linesAfter: linesAfter);
+//     }
+//     return bytes;
+//   }
+
+//   /// Skips [n] lines
+//   ///
+//   /// Similar to [feed] but uses an alternative command
+//   List<int> emptyLines(int n) {
+//     List<int> bytes = [];
+//     if (n > 0) {
+//       bytes += List.filled(n, '\n').join().codeUnits;
+//     }
+//     return bytes;
+//   }
+
+//   /// Skips [n] lines
+//   ///
+//   /// Similar to [emptyLines] but uses an alternative command
+//   List<int> feed(int n) {
+//     List<int> bytes = [];
+//     if (n >= 0 && n <= 255) {
+//       bytes += Uint8List.fromList(
+//         List.from(cFeedN.codeUnits)..add(n),
+//       );
+//     }
+//     return bytes;
+//   }
+
+//   /// Cut the paper
+//   ///
+//   /// [mode] is used to define the full or partial cut (if supported by the printer)
+//   List<int> cut({PosCutMode mode = PosCutMode.full}) {
+//     List<int> bytes = [];
+//     bytes += emptyLines(5);
+//     if (mode == PosCutMode.partial) {
+//       bytes += cCutPart.codeUnits;
+//     } else {
+//       bytes += cCutFull.codeUnits;
+//     }
+//     return bytes;
+//   }
+
+//   /// Print selected code table.
+//   ///
+//   /// If [codeTable] is null, global code table is used.
+//   /// If global code table is null, default printer code table is used.
+//   List<int> printCodeTable({String? codeTable}) {
+//     List<int> bytes = [];
+//     bytes += cKanjiOff.codeUnits;
+
+//     if (codeTable != null) {
+//       bytes += Uint8List.fromList(
+//         List.from(cCodeTable.codeUnits)..add(_profile.getCodePageId(codeTable)),
+//       );
+//     }
+
+//     bytes += Uint8List.fromList(List<int>.generate(256, (i) => i));
+
+//     // Back to initial code table
+//     setGlobalCodeTable(_codeTable);
+//     return bytes;
+//   }
+
+//   /// Beeps [n] times
+//   ///
+//   /// Beep [duration] could be between 50 and 450 ms.
+//   List<int> beep(
+//       {int n = 3, PosBeepDuration duration = PosBeepDuration.beep450ms}) {
+//     List<int> bytes = [];
+//     if (n <= 0) {
+//       return [];
+//     }
+
+//     int beepCount = n;
+//     if (beepCount > 9) {
+//       beepCount = 9;
+//     }
+
+//     bytes += Uint8List.fromList(
+//       List.from(cBeep.codeUnits)..addAll([beepCount, duration.value]),
+//     );
+
+//     beep(n: n - 9, duration: duration);
+//     return bytes;
+//   }
+
+//   /// Reverse feed for [n] lines (if supported by the printer)
+//   List<int> reverseFeed(int n) {
+//     List<int> bytes = [];
+//     bytes += Uint8List.fromList(
+//       List.from(cReverseFeedN.codeUnits)..add(n),
+//     );
+//     return bytes;
+//   }
+
+//   /// Print a row.
+//   ///
+//   /// A row contains up to 12 columns. A column has a width between 1 and 12.
+//   /// Total width of columns in one row must be equal 12.
+//   // List<int> row(List<PosColumn> cols, {bool multiLine = true}) {
+//   //   List<int> bytes = [];
+//   //   final isSumValid = cols.fold(0, (int sum, col) => sum + col.width) == 12;
+//   //   if (!isSumValid) {
+//   //     throw Exception('Total columns width must be equal to 12');
+//   //   }
+//   //   bool isNextRow = false;
+//   //   List<PosColumn> nextRow = <PosColumn>[];
+
+//   //   for (int i = 0; i < cols.length; ++i) {
+//   //     int colInd =
+//   //         cols.sublist(0, i).fold(0, (int sum, col) => sum + col.width);
+//   //     double charWidth = _getCharWidth(cols[i].styles);
+//   //     double fromPos = _colIndToPosition(colInd);
+
+//   //     final double toPos = _colIndToPosition(colInd + cols[i].width);
+//   //     int maxCharactersNb = ((toPos - fromPos) / charWidth).floor();
+
+//   //     if (!cols[i].containsChinese) {
+//   //       // CASE 1: containsChinese = false
+//   //       Uint8List encodedToPrint = cols[i].textEncoded != null
+//   //           ? cols[i].textEncoded!
+//   //           : _encode(cols[i].text);
+
+//   //       // If the col's content is too long, split it to the next row
+//   //       if (multiLine) {
+//   //         int realCharactersNb = encodedToPrint.length;
+//   //         if (realCharactersNb > maxCharactersNb) {
+//   //           // Print max possible and split to the next row
+//   //           Uint8List encodedToPrintNextRow =
+//   //               encodedToPrint.sublist(maxCharactersNb);
+//   //           encodedToPrint = encodedToPrint.sublist(0, maxCharactersNb);
+//   //           isNextRow = true;
+//   //           nextRow.add(PosColumn(
+//   //               textEncoded: encodedToPrintNextRow,
+//   //               width: cols[i].width,
+//   //               styles: cols[i].styles));
+//   //         } else {
+//   //           // Insert an empty col
+//   //           nextRow.add(PosColumn(
+//   //               text: '', width: cols[i].width, styles: cols[i].styles));
+//   //         }
+//   //       }
+//   //       // end rows splitting
+//   //       bytes += _text(
+//   //         encodedToPrint,
+//   //         styles: cols[i].styles,
+//   //         colInd: colInd,
+//   //         colWidth: cols[i].width,
+//   //       );
+//   //     } else {
+//   //       // CASE 1: containsChinese = true
+//   //       // Split text into multiple lines if it too long
+//   //       int counter = 0;
+//   //       int splitPos = 0;
+//   //       for (int p = 0; p < cols[i].text.length; ++p) {
+//   //         final int w = _isChinese(cols[i].text[p]) ? 2 : 1;
+//   //         if (counter + w >= maxCharactersNb) {
+//   //           break;
+//   //         }
+//   //         counter += w;
+//   //         splitPos += 1;
+//   //       }
+//   //       String toPrintNextRow = cols[i].text.substring(splitPos);
+//   //       String toPrint = cols[i].text.substring(0, splitPos);
+
+//   //       if (toPrintNextRow.isNotEmpty) {
+//   //         isNextRow = true;
+//   //         nextRow.add(PosColumn(
+//   //             text: toPrintNextRow,
+//   //             containsChinese: true,
+//   //             width: cols[i].width,
+//   //             styles: cols[i].styles));
+//   //       } else {
+//   //         // Insert an empty col
+//   //         nextRow.add(PosColumn(
+//   //             text: '', width: cols[i].width, styles: cols[i].styles));
+//   //       }
+
+//   //       // Print current row
+//   //       final list = _getLexemes(toPrint);
+//   //       final List<String> lexemes = list[0];
+//   //       final List<bool> isLexemeChinese = list[1];
+
+//   //       // Print each lexeme using codetable OR kanji
+//   //       int? colIndex = colInd;
+//   //       for (var j = 0; j < lexemes.length; ++j) {
+//   //         bytes += _text(
+//   //           _encode(lexemes[j], isKanji: isLexemeChinese[j]),
+//   //           styles: cols[i].styles,
+//   //           colInd: colIndex,
+//   //           colWidth: cols[i].width,
+//   //           isKanji: isLexemeChinese[j],
+//   //         );
+//   //         // Define the absolute position only once (we print one line only)
+//   //         colIndex = null;
+//   //       }
+//   //     }
+//   //   }
+
+//   //   bytes += emptyLines(1);
+
+//   //   if (isNextRow) {
+//   //     bytes += row(nextRow);
+//   //   }
+//   //   return bytes;
+//   // }
+
+//   List<int> row(List<PosColumn> cols, {bool multiLine = true}) {
+//     List<int> bytes = [];
+
+//     final isSumValid = cols.fold(0, (int sum, col) => sum + col.width) == 12;
+//     if (!isSumValid) {
+//       throw Exception('Total columns width must be equal to 12');
+//     }
+
+//     // Step 1: Prepare all lines of text for each column
+//     List<List<PosColumn>> linesPerColumn = [];
+
+//     for (var col in cols) {
+//       List<PosColumn> lines = [];
+
+//       if (!multiLine) {
+//         lines.add(col);
+//         linesPerColumn.add(lines);
+//         continue;
+//       }
+
+//       double charWidth = _getCharWidth(col.styles);
+//       double maxWidth = _colIndToPosition(col.width);
+//       int maxCharacters = (maxWidth / charWidth).floor();
+
+//       if (col.containsChinese) {
+//         // For Chinese text, handle width more carefully
+//         List<String> wrapped = _wrapChineseText(col.text, maxCharacters);
+//         for (var line in wrapped) {
+//           lines.add(PosColumn(
+//             text: line,
+//             width: col.width,
+//             styles: col.styles,
+//             containsChinese: true,
+//           ));
+//         }
+//       } else {
+//         // Latin/regular text
+//         String fullText = col.text;
+//         while (fullText.isNotEmpty) {
+//           int take = maxCharacters;
+//           if (fullText.length > take) {
+//             lines.add(PosColumn(
+//               text: fullText.substring(0, take),
+//               width: col.width,
+//               styles: col.styles,
+//             ));
+//             fullText = fullText.substring(take);
+//           } else {
+//             lines.add(PosColumn(
+//               text: fullText,
+//               width: col.width,
+//               styles: col.styles,
+//             ));
+//             fullText = '';
+//           }
+//         }
+//       }
+
+//       linesPerColumn.add(lines);
+//     }
+
+//     // Step 2: Determine how many total lines we'll print
+//     final int maxLineCount = linesPerColumn
+//         .map((list) => list.length)
+//         .reduce((a, b) => a > b ? a : b);
+
+//     // Step 3: Print each row line-by-line
+//     for (int line = 0; line < maxLineCount; line++) {
+//       for (int i = 0; i < cols.length; i++) {
+//         int colInd =
+//             cols.sublist(0, i).fold(0, (int sum, col) => sum + col.width);
+//         PosColumn colLine;
+
+//         if (line < linesPerColumn[i].length) {
+//           colLine = linesPerColumn[i][line];
+//         } else {
+//           colLine = PosColumn(
+//             text: '',
+//             width: cols[i].width,
+//             styles: cols[i].styles,
+//             containsChinese: cols[i].containsChinese,
+//           );
+//         }
+
+//         if (colLine.containsChinese) {
+//           final list = _getLexemes(colLine.text);
+//           final List<String> lexemes = list[0];
+//           final List<bool> isLexemeChinese = list[1];
+//           int? colIndex = colInd;
+//           for (var j = 0; j < lexemes.length; ++j) {
+//             bytes += _text(
+//               _encode(lexemes[j], isKanji: isLexemeChinese[j]),
+//               styles: colLine.styles,
+//               colInd: colIndex,
+//               colWidth: colLine.width,
+//               isKanji: isLexemeChinese[j],
+//             );
+//             colIndex = null;
+//           }
+//         } else {
+//           bytes += _text(
+//             _encode(colLine.text),
+//             styles: colLine.styles,
+//             colInd: colInd,
+//             colWidth: colLine.width,
+//           );
+//         }
+//       }
+
+//       bytes += emptyLines(1);
+//     }
+
+//     return bytes;
+//   }
+
+//   List<String> _wrapChineseText(String text, int maxCharacters) {
+//     List<String> lines = [];
+//     int counter = 0;
+//     int splitStart = 0;
+
+//     for (int i = 0; i < text.length; ++i) {
+//       final int w = _isChinese(text[i]) ? 2 : 1;
+//       counter += w;
+
+//       if (counter >= maxCharacters) {
+//         lines.add(text.substring(splitStart, i + 1));
+//         splitStart = i + 1;
+//         counter = 0;
+//       }
+//     }
+
+//     if (splitStart < text.length) {
+//       lines.add(text.substring(splitStart));
+//     }
+
+//     return lines;
+//   }
+
+//   /// Print an image using (ESC *) command
+//   ///
+//   /// [image] is an instance of class from [Image library](https://pub.dev/packages/image)
+//   List<int> image(Image imgSrc,
+//       {PosAlign align = PosAlign.center, bool isDoubleDensity = true}) {
+//     List<int> bytes = [];
+//     // Image alignment
+//     bytes += setStyles(const PosStyles().copyWith(align: align));
+
+//     Image image;
+//     if (!isDoubleDensity) {
+//       int size = 576 ~/ 2;
+//       if (_paperSize == PaperSize.mm58) {
+//         size = 384 ~/ 2;
+//       } else if (_paperSize == PaperSize.mm72) {
+//         size = 512 ~/ 2;
+//       }
+
+//       image =
+//           copyResize(imgSrc, width: size, interpolation: Interpolation.linear);
+//     } else {
+//       image = Image.from(imgSrc); // make a copy
+//     }
+
+//     bool highDensityHorizontal = isDoubleDensity;
+//     bool highDensityVertical = isDoubleDensity;
+
+//     invert(image);
+//     flipHorizontal(image);
+//     final Image imageRotated = copyRotate(image, angle: 270);
+
+//     int lineHeight = highDensityVertical ? 3 : 1;
+//     final List<List<int>> blobs = _toColumnFormat(imageRotated, lineHeight * 8);
+
+//     // Compress according to line density
+//     // Line height contains 8 or 24 pixels of src image
+//     // Each blobs[i] contains greyscale bytes [0-255]
+//     // const int pxPerLine = 24 ~/ lineHeight;
+//     for (int blobInd = 0; blobInd < blobs.length; blobInd++) {
+//       blobs[blobInd] = _packBitsIntoBytes(blobs[blobInd]);
+//     }
+
+//     final int heightPx = imageRotated.height;
+//     int densityByte =
+//         (highDensityHorizontal ? 1 : 0) + (highDensityVertical ? 32 : 0);
+
+//     final List<int> header = List.from(cBitImg.codeUnits);
+//     header.add(densityByte);
+//     header.addAll(_intLowHigh(heightPx, 2));
+
+//     // Adjust line spacing (for 16-unit line feeds): ESC 3 0x10 (HEX: 0x1b 0x33 0x10)
+//     bytes += [27, 51, 0];
+//     for (int i = 0; i < blobs.length; ++i) {
+//       bytes += List.from(header)
+//         ..addAll(blobs[i])
+//         ..addAll('\n'.codeUnits);
+//     }
+//     // Reset line spacing: ESC 2 (HEX: 0x1b 0x32)
+//     bytes += [27, 50];
+//     return bytes;
+//   }
+
+//   /// Print an image using (GS v 0) obsolete command
+//   ///
+//   /// [image] is an instanse of class from [Image library](https://pub.dev/packages/image)
+//   List<int> imageRaster(
+//     Image image, {
+//     PosAlign align = PosAlign.center,
+//     bool highDensityHorizontal = true,
+//     bool highDensityVertical = true,
+//     PosImageFn imageFn = PosImageFn.bitImageRaster,
+//   }) {
+//     List<int> bytes = [];
+//     // Image alignment
+//     bytes += setStyles(const PosStyles().copyWith(align: align));
+
+//     final int widthPx = image.width;
+//     final int heightPx = image.height;
+//     final int widthBytes = (widthPx + 7) ~/ 8;
+//     final List<int> rasterizedData = _toRasterFormat(image);
+
+//     if (imageFn == PosImageFn.bitImageRaster) {
+//       // GS v 0
+//       final int densityByte =
+//           (highDensityVertical ? 0 : 1) + (highDensityHorizontal ? 0 : 2);
+
+//       final List<int> header = List.from(cRasterImg2.codeUnits);
+//       header.add(densityByte); // m
+//       header.addAll(_intLowHigh(widthBytes, 2)); // xL xH
+//       header.addAll(_intLowHigh(heightPx, 2)); // yL yH
+//       bytes += List.from(header)..addAll(rasterizedData);
+//     } else if (imageFn == PosImageFn.graphics) {
+//       // 'GS ( L' - FN_112 (Image data)
+//       final List<int> header1 = List.from(cRasterImg.codeUnits);
+//       header1.addAll(_intLowHigh(widthBytes * heightPx + 10, 2)); // pL pH
+//       header1.addAll([48, 112, 48]); // m=48, fn=112, a=48
+//       header1.addAll([1, 1]); // bx=1, by=1
+//       header1.addAll([49]); // c=49
+//       header1.addAll(_intLowHigh(widthBytes, 2)); // xL xH
+//       header1.addAll(_intLowHigh(heightPx, 2)); // yL yH
+//       bytes += List.from(header1)..addAll(rasterizedData);
+
+//       // 'GS ( L' - FN_50 (Run print)
+//       final List<int> header2 = List.from(cRasterImg.codeUnits);
+//       header2.addAll([2, 0]); // pL pH
+//       header2.addAll([48, 50]); // m fn[2,50]
+//       bytes += List.from(header2);
+//     }
+//     return bytes;
+//   }
+
+//   /// Print a barcode
+//   ///
+//   /// [width] range and units are different depending on the printer model (some printers use 1..5).
+//   /// [height] range: 1 - 255. The units depend on the printer model.
+//   /// Width, height, font, text position settings are effective until performing of ESC @, reset or power-off.
+//   List<int> barcode(
+//     Barcode barcode, {
+//     int? width,
+//     int? height,
+//     BarcodeFont? font,
+//     BarcodeText textPos = BarcodeText.below,
+//     PosAlign align = PosAlign.center,
+//   }) {
+//     List<int> bytes = [];
+//     // Set alignment
+//     bytes += setStyles(const PosStyles().copyWith(align: align));
+
+//     // Set text position
+//     bytes += cBarcodeSelectPos.codeUnits + [textPos.value];
+
+//     // Set font
+//     if (font != null) {
+//       bytes += cBarcodeSelectFont.codeUnits + [font.value];
+//     }
+
+//     // Set width
+//     if (width != null && width >= 0) {
+//       bytes += cBarcodeSetW.codeUnits + [width];
+//     }
+//     // Set height
+//     if (height != null && height >= 1 && height <= 255) {
+//       bytes += cBarcodeSetH.codeUnits + [height];
+//     }
+
+//     // Print barcode
+//     final header = cBarcodePrint.codeUnits + [barcode.type.value];
+//     if (barcode.type.value <= 6) {
+//       // Function A
+//       bytes += header + barcode.data + [0];
+//     } else {
+//       // Function B
+//       bytes += header + [barcode.data.length] + barcode.data;
+//     }
+//     return bytes;
+//   }
+
+//   /// Print a QR Code
+//   List<int> qrcode(
+//     String text, {
+//     PosAlign align = PosAlign.center,
+//     QRSize size = QRSize.size4,
+//     QRCorrection cor = QRCorrection.L,
+//   }) {
+//     List<int> bytes = [];
+//     // Set alignment
+//     bytes += setStyles(const PosStyles().copyWith(align: align));
+//     QRCode qr = QRCode(text, size, cor);
+//     bytes += qr.bytes;
+//     return bytes;
+//   }
+
+//   //0 - 17
+//   //or 48 - 59
+//   //TM-T82II  m = 0 – 11, 48 – 59
+//   List<int> printSpeech(int level) {
+//     List<int> bytes = [];
+//     // FN 167. QR Code: Set the size of module
+//     // pL pH fn m
+//     bytes += cControlHeader.codeUnits + [0x02, 0x00, 0x32, level];
+//     return bytes;
+//   }
+
+//   /// Open cash drawer
+//   List<int> drawer({PosDrawer pin = PosDrawer.pin2}) {
+//     List<int> bytes = [];
+//     if (pin == PosDrawer.pin2) {
+//       bytes += cCashDrawerPin2.codeUnits;
+//     } else {
+//       bytes += cCashDrawerPin5.codeUnits;
+//     }
+//     return bytes;
+//   }
+
+//   /// Print horizontal full width separator
+//   /// If [len] is null, then it will be defined according to the paper width
+//   List<int> hr({String ch = '-', int? len, int linesAfter = 0}) {
+//     List<int> bytes = [];
+//     int n = len ?? _maxCharsPerLine ?? _getMaxCharsPerLine(_styles.fontType);
+//     String ch1 = ch.length == 1 ? ch : ch[0];
+//     bytes += text(List.filled(n, ch1).join(), linesAfter: linesAfter);
+//     return bytes;
+//   }
+
+//   List<int> textEncoded(
+//     Uint8List textBytes, {
+//     PosStyles styles = const PosStyles(),
+//     int linesAfter = 0,
+//     int? maxCharsPerLine,
+//   }) {
+//     List<int> bytes = [];
+//     bytes += _text(textBytes, styles: styles, maxCharsPerLine: maxCharsPerLine);
+//     // Ensure at least one line break after the text
+//     bytes += emptyLines(linesAfter + 1);
+//     return bytes;
+//   }
+//   // ************************ (end) Public command generators ************************
+
+//   // ************************ (end) Internal command generators ************************
+//   /// Generic print for internal use
+//   ///
+//   /// [colInd] range: 0..11. If null: do not define the position
+//   List<int> _text(
+//     Uint8List textBytes, {
+//     PosStyles styles = const PosStyles(),
+//     int? colInd = 0,
+//     bool isKanji = false,
+//     int colWidth = 12,
+//     int? maxCharsPerLine,
+//   }) {
+//     List<int> bytes = [];
+//     if (colInd != null) {
+//       double charWidth =
+//           _getCharWidth(styles, maxCharsPerLine: maxCharsPerLine);
+//       double fromPos = _colIndToPosition(colInd);
+
+//       // Align
+//       if (colWidth != 12) {
+//         // Update fromPos
+//         final double toPos = _colIndToPosition(colInd + colWidth);
+//         final double textLen = textBytes.length * charWidth;
+
+//         if (styles.align == PosAlign.right) {
+//           fromPos = toPos - textLen;
+//         } else if (styles.align == PosAlign.center) {
+//           fromPos = fromPos + (toPos - fromPos) / 2 - textLen / 2;
+//         }
+//         if (fromPos < 0) {
+//           fromPos = 0;
+//         }
+//       }
+
+//       final hexStr = fromPos.round().toRadixString(16).padLeft(3, '0');
+//       final hexPair = HEX.decode(hexStr);
+
+//       // Position
+//       bytes += Uint8List.fromList(
+//         List.from(cPos.codeUnits)..addAll([hexPair[1], hexPair[0]]),
+//       );
+//     }
+
+//     bytes += setStyles(styles, isKanji: isKanji);
+
+//     bytes += textBytes;
+//     return bytes;
+//   }
+
+//   /// Prints one line of styled mixed (chinese and latin symbols) text
+//   List<int> _mixedKanji(
+//     String text, {
+//     PosStyles styles = const PosStyles(),
+//     int linesAfter = 0,
+//     int? maxCharsPerLine,
+//   }) {
+//     List<int> bytes = [];
+//     final list = _getLexemes(text);
+//     final List<String> lexemes = list[0];
+//     final List<bool> isLexemeChinese = list[1];
+
+//     // Print each lexeme using codetable OR kanji
+//     int? colInd = 0;
+//     for (var i = 0; i < lexemes.length; ++i) {
+//       bytes += _text(
+//         _encode(lexemes[i], isKanji: isLexemeChinese[i]),
+//         styles: styles,
+//         colInd: colInd,
+//         isKanji: isLexemeChinese[i],
+//         maxCharsPerLine: maxCharsPerLine,
+//       );
+//       // Define the absolute position only once (we print one line only)
+//       colInd = null;
+//     }
+
+//     bytes += emptyLines(linesAfter + 1);
+//     return bytes;
+//   }
+
+//   /// Print a custom table row with better spacing control
+//   /// This method provides more precise control over column spacing
+//   List<int> customTableRow(List<String> columns, List<int> widths,
+//       {List<PosAlign>? aligns, PosStyles? styles}) {
+//     if (columns.length != widths.length) {
+//       throw Exception('Columns and widths must have the same length');
+//     }
+
+//     final totalWidth = widths.fold(0, (sum, width) => sum + width);
+//     if (totalWidth != 12) {
+//       throw Exception('Total width must equal 12');
+//     }
+
+//     List<int> bytes = [];
+//     final defaultStyles = styles ?? const PosStyles();
+
+//     // Calculate character width for current font
+//     final charsPerLine = _getCharsPerLine(defaultStyles, null);
+//     final totalChars = charsPerLine;
+
+//     String line = '';
+//     int currentPos = 0;
+
+//     for (int i = 0; i < columns.length; i++) {
+//       final colWidth = (totalChars * widths[i] / 12).floor();
+//       final align =
+//           aligns != null && i < aligns.length ? aligns[i] : PosAlign.left;
+//       String colText = columns[i];
+
+//       // Truncate if too long
+//       if (colText.length > colWidth) {
+//         colText = colText.substring(0, colWidth);
+//       }
+
+//       // Apply alignment
+//       String paddedText;
+//       if (align == PosAlign.right) {
+//         paddedText = colText.padLeft(colWidth);
+//       } else if (align == PosAlign.center) {
+//         final leftPad = ((colWidth - colText.length) / 2).floor();
+//         paddedText =
+//             colText.padLeft(leftPad + colText.length).padRight(colWidth);
+//       } else {
+//         paddedText = colText.padRight(colWidth);
+//       }
+
+//       line += paddedText;
+//       currentPos += colWidth;
+//     }
+
+//     bytes += _encode(line);
+//     bytes += '\n'.codeUnits;
+
+//     return bytes;
+//   }
+
+// // ************************ (end) Internal command generators ************************
+// }
+
 import 'dart:convert';
 import 'dart:typed_data' show Uint8List;
 import 'package:flutter/services.dart';
@@ -1025,8 +2109,13 @@ class Generator {
 
   /// Print a custom table row with better spacing control
   /// This method provides more precise control over column spacing
+  /// [allowTextWrapping] - if true, long text will wrap to next line instead of truncating
+  /// [wrapColumnIndex] - index of column to wrap (if -1, wraps all columns)
   List<int> customTableRow(List<String> columns, List<int> widths,
-      {List<PosAlign>? aligns, PosStyles? styles}) {
+      {List<PosAlign>? aligns,
+      PosStyles? styles,
+      bool allowTextWrapping = false,
+      int wrapColumnIndex = -1}) {
     if (columns.length != widths.length) {
       throw Exception('Columns and widths must have the same length');
     }
@@ -1043,6 +2132,16 @@ class Generator {
     final charsPerLine = _getCharsPerLine(defaultStyles, null);
     final totalChars = charsPerLine;
 
+    // If text wrapping is enabled, handle multi-line text
+    if (allowTextWrapping) {
+      return _customTableRowWithWrapping(columns, widths,
+          aligns: aligns,
+          styles: defaultStyles,
+          wrapColumnIndex: wrapColumnIndex,
+          totalChars: totalChars);
+    }
+
+    // Original single-line logic
     String line = '';
     int currentPos = 0;
 
@@ -1077,6 +2176,108 @@ class Generator {
     bytes += '\n'.codeUnits;
 
     return bytes;
+  }
+
+  /// Helper method for customTableRow with text wrapping support
+  List<int> _customTableRowWithWrapping(List<String> columns, List<int> widths,
+      {List<PosAlign>? aligns,
+      required PosStyles styles,
+      required int wrapColumnIndex,
+      required int totalChars}) {
+    List<int> bytes = [];
+
+    // Calculate column widths in characters
+    List<int> colWidthsInChars =
+        widths.map((width) => (totalChars * width / 12).floor()).toList();
+
+    // Find which columns need wrapping and create wrapped lines
+    List<List<String>> wrappedColumns = [];
+    int maxLines = 1;
+
+    for (int i = 0; i < columns.length; i++) {
+      bool shouldWrapThisColumn = wrapColumnIndex == -1 || wrapColumnIndex == i;
+
+      if (shouldWrapThisColumn && columns[i].length > colWidthsInChars[i]) {
+        List<String> wrapped =
+            _wrapTextToLines(columns[i], colWidthsInChars[i]);
+        wrappedColumns.add(wrapped);
+        maxLines = maxLines > wrapped.length ? maxLines : wrapped.length;
+      } else {
+        // Single line, possibly truncated
+        String colText = columns[i];
+        if (colText.length > colWidthsInChars[i]) {
+          colText = colText.substring(0, colWidthsInChars[i]);
+        }
+        wrappedColumns.add([colText]);
+      }
+    }
+
+    // Print each line
+    for (int lineIndex = 0; lineIndex < maxLines; lineIndex++) {
+      String line = '';
+
+      for (int colIndex = 0; colIndex < columns.length; colIndex++) {
+        final colWidth = colWidthsInChars[colIndex];
+        final align = aligns != null && colIndex < aligns.length
+            ? aligns[colIndex]
+            : PosAlign.left;
+
+        // Get text for this line (empty if no more lines for this column)
+        String colText = '';
+        if (lineIndex < wrappedColumns[colIndex].length) {
+          colText = wrappedColumns[colIndex][lineIndex];
+        }
+
+        // Apply alignment
+        String paddedText;
+        if (align == PosAlign.right) {
+          paddedText = colText.padLeft(colWidth);
+        } else if (align == PosAlign.center) {
+          final leftPad = ((colWidth - colText.length) / 2).floor();
+          paddedText =
+              colText.padLeft(leftPad + colText.length).padRight(colWidth);
+        } else {
+          paddedText = colText.padRight(colWidth);
+        }
+
+        line += paddedText;
+      }
+
+      bytes += _encode(line);
+      bytes += '\n'.codeUnits;
+    }
+
+    return bytes;
+  }
+
+  /// Wraps text to fit within specified character width
+  List<String> _wrapTextToLines(String text, int maxWidth) {
+    if (text.length <= maxWidth) {
+      return [text];
+    }
+
+    List<String> lines = [];
+    String remainingText = text;
+
+    while (remainingText.length > maxWidth) {
+      // Find the best break point (last space before maxWidth)
+      int breakPoint = maxWidth;
+      int lastSpace = remainingText.lastIndexOf(' ', maxWidth - 1);
+
+      if (lastSpace > 0 && lastSpace > maxWidth * 0.7) {
+        // Use space break if it's not too close to the beginning
+        breakPoint = lastSpace;
+      }
+
+      lines.add(remainingText.substring(0, breakPoint).trim());
+      remainingText = remainingText.substring(breakPoint).trim();
+    }
+
+    if (remainingText.isNotEmpty) {
+      lines.add(remainingText);
+    }
+
+    return lines;
   }
 
 // ************************ (end) Internal command generators ************************
