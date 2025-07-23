@@ -510,6 +510,7 @@ class Generator {
           if (realCharactersNb > maxCharactersNb) {
             // Print max possible and split to the next row
             // Ensure we don't split in the middle of a word if possible
+            // Test
             int splitPoint = maxCharactersNb;
             String originalText = cols[i].text;
             if (maxCharactersNb < originalText.length &&
