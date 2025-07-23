@@ -29,7 +29,8 @@ class Generator {
     } else if (_paperSize == PaperSize.mm72) {
       return (font == null || font == PosFontType.fontA) ? 42 : 56;
     } else {
-      return (font == null || font == PosFontType.fontA) ? 48 : 64;
+      // return (font == null || font == PosFontType.fontA) ? 48 : 64;
+      return (font == null || font == PosFontType.fontA) ? 42 : 56;
     }
   }
 
@@ -494,8 +495,9 @@ class Generator {
           cols.sublist(0, i).fold(0, (int sum, col) => sum + col.width);
       double charWidth = _getCharWidth(cols[i].styles);
       double fromPos = _colIndToPosition(colInd);
-      final double toPos =
-          _colIndToPosition(colInd + cols[i].width) - spaceBetweenRows;
+      // final double toPos =
+      //     _colIndToPosition(colInd + cols[i].width) - spaceBetweenRows;
+      final double toPos = _colIndToPosition(colInd + cols[i].width);
       int maxCharactersNb = ((toPos - fromPos) / charWidth).floor();
 
       if (!cols[i].containsChinese) {
