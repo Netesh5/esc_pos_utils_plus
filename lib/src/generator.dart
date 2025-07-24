@@ -1151,6 +1151,7 @@ class Generator {
         .replaceAll("´", "'")
         .replaceAll("»", '"')
         .replaceAll(" ", ' ')
+        .replaceAll("-", " ")
         .replaceAll("•", '.');
     if (!isKanji) {
       return codec.encode(text);
