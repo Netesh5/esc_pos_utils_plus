@@ -2144,7 +2144,6 @@ class Generator {
 
     // Original single-line logic
     String line = '';
-    int currentPos = 0;
 
     for (int i = 0; i < columns.length; i++) {
       final colWidth = (totalChars * widths[i] / 12).floor();
@@ -2170,10 +2169,13 @@ class Generator {
       }
 
       line += paddedText;
-      currentPos += colWidth;
     }
 
-    bytes += _encode(line);
+    bytes += _text(
+      _encode(line),
+      styles: defaultStyles,
+      colInd: null,
+    );
     bytes += '\n'.codeUnits;
 
     return bytes;
@@ -2244,7 +2246,11 @@ class Generator {
         line += paddedText;
       }
 
-      bytes += _encode(line);
+      bytes += _text(
+        _encode(line),
+        styles: styles,
+        colInd: null,
+      );
       bytes += '\n'.codeUnits;
     }
 

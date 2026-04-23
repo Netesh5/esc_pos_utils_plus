@@ -8,6 +8,7 @@ class QRSize {
   static const size1 = QRSize(0x01);
   static const size2 = QRSize(0x02);
   static const size3 = QRSize(0x03);
+  static const size3_5 = QRSize(0x035);
   static const size4 = QRSize(0x04);
   static const size5 = QRSize(0x05);
   static const size6 = QRSize(0x06);
